@@ -1,6 +1,6 @@
 # EkoMindAI
 
-EkoMindAI is a cross-platform therapeutic assistant app built with React Native (Expo) for the frontend and FastAPI for the backend. It leverages AI to provide mental wellness support, including chat, voice input, and personalized suggestions.
+EkoMindAI is a cross-platform therapeutic assistant app. It leverages AI to provide mental wellness support, including chat, voice input, and personalized suggestions.
 
 ## Features
 
@@ -73,7 +73,7 @@ None
 
 ## API Endpoints
 
-Your backend exposes the following main endpoints:
+The backend Consists of the following main endpoints:
 
 ### `POST /chat`
 
@@ -120,18 +120,7 @@ Send a voice message (audio file) and get a transcribed and AI-processed respons
 }
 ```
 
----
 
-### `GET /api/user/profile` (if implemented)
-
-Get the current user's profile info.
-
-**Response:**
-```json
-{
-  "name": "Julien",
-  "email": "user@example.com"
-}
 ```
 
 ---
