@@ -22,6 +22,8 @@ export default function UserInfoScreen() {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState('');
+  const [bio, setBio] = useState('');
+
   // const [image, setImage] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -67,6 +69,10 @@ export default function UserInfoScreen() {
       Alert.alert('Validation Error', 'Please select your gender.');
       return false;
     }
+    if (!bio.trim()) {
+    Alert.alert('Validation Error', 'Please tell us a bit about yourself.');
+    return false;
+  }
     return true;
   };
 
@@ -104,6 +110,7 @@ export default function UserInfoScreen() {
         age: parseInt(age),
         gender: gender.trim(),
         email: auth.currentUser.email,
+        bio: bio.trim(), 
         // profilePicture: profilePictureUrl,
         createdAt: new Date(),
         lastUpdated: new Date(),
@@ -203,7 +210,20 @@ export default function UserInfoScreen() {
               </View>
             </View>
           </View>
-
+          {/* Bio Input */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Tell us about yourself</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              value={bio}
+              onChangeText={setBio}
+              placeholder="Write a few lines about your interests or goals"
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+          </View>
           {/* Continue Button */}
           <TouchableOpacity
             style={[styles.continueButton, loading && styles.continueButtonDisabled]}
@@ -320,4 +340,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  textArea: {
+  height: 100,
+},
+
 });

@@ -19,6 +19,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Audio } from 'expo-av';
 
+import uuid from 'react-native-uuid';
+import { 
+  collection, 
+  addDoc, 
+  doc, 
+  getDoc, 
+  setDoc,
+  serverTimestamp,
+  query,        
+  orderBy,      
+  getDocs       
+} from 'firebase/firestore';
+import { db,auth } from '../firebase';
+
 const { height: screenHeight } = Dimensions.get('window');
 
 const normalizeText = (text) => {
@@ -26,50 +40,104 @@ const normalizeText = (text) => {
     '\u201c': '"', '\u201d': '"',
     '\u2018': "'", '\u2019': "'",
     '\u2013': '-', '\u2014': '-',
-    '…': '...', '“': '"', '”': '"',
-    '‘': "'", '’': "'", '–': '-', '—': '-',
+    '…': '...',
   };
-  return text.replace(/[\u201c\u201d\u2018\u2019\u2013\u2014…“”‘’–—]/g, match => replacements[match] || match);
+  return text.replace(/[\u201c\u201d\u2018\u2019\u2013\u2014…""''–—]/g, match => replacements[match] || match);
 };
 
-const LoadingDots = () => {
-  const dot1 = useRef(new Animated.Value(0)).current;
-  const dot2 = useRef(new Animated.Value(0)).current;
-  const dot3 = useRef(new Animated.Value(0)).current;
+// Create a function to handle chat initialization
+const initializeChat = async (userEmail, chatId) => {
+  try {
+    const chatRef = doc(db, 'userchats', userEmail, 'chats', chatId);
+    await setDoc(chatRef, {
+      createdAt: serverTimestamp(),
+      lastUpdated: serverTimestamp(),
+      id: chatId
+    });
+    return chatRef;
+  } catch (error) {
+    console.error('Error initializing chat:', error);
+    throw error;
+  }
+};
 
-  useEffect(() => {
-    const animateDots = () => {
-      const createAnimation = (dot, delay) =>
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0, duration: 300, useNativeDriver: true }),
-        ]);
+const fetchUserProfile = async (uid) => {
+  try {
+    const userDocRef = doc(db, 'users', uid);
+    const userDoc = await getDoc(userDocRef);
+    if (userDoc.exists()) {
+      return userDoc.data(); // entire user profile object
+    } else {
+      console.warn('User document does not exist');
+      return null;
+    }
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    return null;
+  }
+};
 
-      Animated.loop(
-        Animated.parallel([
-          createAnimation(dot1, 0),
-          createAnimation(dot2, 200),
-          createAnimation(dot3, 400),
-        ])
-      ).start();
-    };
+// Modify the saveMessageToFirestore function
+const saveMessageToFirestore = async (userEmail, chatId, messageObj) => {
+  try {
+    // First check if chat exists
+    const chatRef = doc(db, 'users', userEmail, 'chats', chatId);
+    const chatDoc = await getDoc(chatRef);
 
-    animateDots();
-  }, []);
+    // If chat doesn't exist, create it
+    if (!chatDoc.exists()) {
+      await initializeChat(userEmail, chatId);
+    }
 
+    // Add message to the chat
+    const messageRef = collection(db, 'users', userEmail, 'chats', chatId, 'messages');
+    const docRef = await addDoc(messageRef, {
+      ...messageObj,
+      timestamp: serverTimestamp(),
+    });
+
+    // Update chat's lastUpdated
+    await setDoc(chatRef, {
+      lastUpdated: serverTimestamp()
+    }, { merge: true });
+
+    return docRef;
+  } catch (error) {
+    console.error('Error saving message:', error);
+    throw error;
+  }
+};
+
+const BlinkingProcessingText = () => {
   return (
-    <View style={styles.loadingContainer}>
-      <Animated.View style={[styles.loadingDot, { opacity: dot1 }]} />
-      <Animated.View style={[styles.loadingDot, { opacity: dot2 }]} />
-      <Animated.View style={[styles.loadingDot, { opacity: dot3 }]} />
+    <View style={{ paddingVertical: 10, alignItems: 'center' }}>
+      <Text style={{ fontSize: 14, color: '#FF4800', fontWeight: '600' }}>
+        Processing...
+      </Text>
     </View>
   );
 };
 
+
+
+// Format time like WhatsApp
+const formatMessageTime = (timestamp) => {
+  if (!timestamp) return '';
+  
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  
+  if (isToday) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } else {
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+};
+
 export default function ChatScreen({ route, navigation }) {
   const { promptText } = route.params || {};
-  const user = route.params?.user || { email: "guest@ekomind.com" };
+  const user = route.params?.user || { email: auth.currentUser?.email };
 
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
@@ -83,10 +151,43 @@ export default function ChatScreen({ route, navigation }) {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
+  const [chatId] = useState(() => {
+    return route.params?.chatId || uuid.v4();
+  });
+  const [isExistingChat] = useState(() => route.params?.isExistingChat || false);
+
+  // Animation refs for WhatsApp-style input
+  const inputContainerWidth = useRef(new Animated.Value(1)).current;
+  const voiceButtonScale = useRef(new Animated.Value(1)).current;
+  const voiceButtonOpacity = useRef(new Animated.Value(1)).current;
+  const sendButtonScale = useRef(new Animated.Value(input.trim().length > 0 ? 1 : 0)).current;
+  const recordingPulse = useRef(new Animated.Value(1)).current;
+
+  const loadExistingMessages = async (existingChatId) => {
+    if (!existingChatId || !user?.email) return;
+    
+    try {
+      setIsLoading(true);
+      const messagesRef = collection(db, 'users', user.email, 'chats', existingChatId, 'messages');
+      const messagesQuery = query(messagesRef, orderBy('timestamp', 'asc'));
+      const snapshot = await getDocs(messagesQuery);
+      
+      const existingMessages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      setMessages(existingMessages);
+    } catch (error) {
+      console.error('Error loading existing messages:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const inputBottom = useRef(new Animated.Value(61)).current;
   const flatListRef = useRef(null);
   const inputRef = useRef(null);
-  const recordingButtonScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     requestAudioPermissions();
@@ -101,12 +202,20 @@ export default function ChatScreen({ route, navigation }) {
   };
 
   useEffect(() => {
+    if (isExistingChat && route.params?.chatId) {
+      loadExistingMessages(route.params.chatId);
+    } else if (promptText) {
+      sendMessage(promptText);
+    }
+  }, [route.params?.chatId, isExistingChat, promptText]);
+
+  useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', e => {
       setKeyboardVisible(true);
       setKeyboardHeight(e.endCoordinates.height);
       Animated.timing(inputBottom, {
         toValue: e.endCoordinates.height,
-        duration: 120,
+        duration: 250,
         useNativeDriver: false,
       }).start();
     });
@@ -115,7 +224,7 @@ export default function ChatScreen({ route, navigation }) {
       setKeyboardHeight(0);
       Animated.timing(inputBottom, {
         toValue: 61,
-        duration: 120,
+        duration: 250,
         useNativeDriver: false,
       }).start();
     });
@@ -139,6 +248,39 @@ export default function ChatScreen({ route, navigation }) {
   useEffect(() => {
     return sound ? () => sound.unloadAsync() : undefined;
   }, [sound]);
+
+  // WhatsApp-style input animations
+  useEffect(() => {
+    if (input.trim().length > 0) {
+      // Show send button, hide voice button
+      Animated.parallel([
+        Animated.timing(voiceButtonOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
+        Animated.timing(voiceButtonScale, { toValue: 0, duration: 150, useNativeDriver: true }),
+        Animated.timing(sendButtonScale, { toValue: 1, duration: 150, useNativeDriver: true }),
+      ]).start();
+    } else {
+      // Show voice button, hide send button
+      Animated.parallel([
+        Animated.timing(voiceButtonOpacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+        Animated.timing(voiceButtonScale, { toValue: 1, duration: 150, useNativeDriver: true }),
+        Animated.timing(sendButtonScale, { toValue: 0, duration: 150, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [input]);
+
+  // Recording pulse animation
+  useEffect(() => {
+    if (isRecording) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(recordingPulse, { toValue: 1.3, duration: 800, useNativeDriver: true }),
+          Animated.timing(recordingPulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      recordingPulse.setValue(1);
+    }
+  }, [isRecording]);
 
   const playBeepSound = async () => {
     try {
@@ -165,7 +307,6 @@ export default function ChatScreen({ route, navigation }) {
       setRecording(recording);
       setIsRecording(true);
       setRecordingIndicator('Recording...');
-      Animated.spring(recordingButtonScale, { toValue: 1.2, useNativeDriver: true }).start();
     } catch (e) {
       console.error('Start recording error:', e);
     }
@@ -178,7 +319,6 @@ export default function ChatScreen({ route, navigation }) {
       setIsRecording(false);
       setIsProcessingVoice(true);
       setRecordingIndicator('Processing...');
-      Animated.spring(recordingButtonScale, { toValue: 1, useNativeDriver: true }).start();
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
       await sendVoiceMessage(uri);
@@ -193,8 +333,20 @@ export default function ChatScreen({ route, navigation }) {
 
   const sendVoiceMessage = async (audioUri) => {
     if (isLoading) return;
-    setMessages(prev => [...prev, { role: 'bot', isLoading: true, isVoiceProcessing: true }]);
+    
+    // Add loading message with proper structure
+    const loadingMessage = { 
+      id: `loading-${Date.now()}`,
+      role: 'bot', 
+      content: '', 
+      isLoading: true, 
+      isVoiceProcessing: true,
+      timestamp: new Date().toISOString()
+    };
+    
+    setMessages(prev => [...prev, loadingMessage]);
     setIsLoading(true);
+    
     try {
       const formData = new FormData();
       formData.append('audio', {
@@ -213,85 +365,191 @@ export default function ChatScreen({ route, navigation }) {
 
       const data = await response.json();
 
-      const botMsg = {
-        role: 'bot',
-        content: '',
-        scriptOffered: data.script_offered || false,
-        scriptId: data.script_id || null,
-        scriptMetadata: data.script_metadata || null,
-      };
+      // Remove the loading indicator
+      setMessages(prev => prev.filter(msg => msg.id !== loadingMessage.id));
 
+      // Show transcribed text immediately if available
       if (data.transcribed_text) {
-        setMessages(prev => [
-          ...prev.slice(0, -1),
-          { role: 'user', content: `🎤 "${data.transcribed_text}"` },
-          botMsg,
-        ]);
-        simulateStreaming(data.message || '');
+        const userMsg = { 
+          id: `user-${Date.now()}`,
+          role: 'user', 
+          content: `🎤 "${data.transcribed_text}"`,
+          isVoiceTranscription: true,
+          timestamp: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, userMsg]);
+        await saveMessageToFirestore(user.email, chatId, userMsg);
+
+        // Small delay to show the transcription before bot response
+        setTimeout(() => {
+          const botMsg = {
+            id: `bot-${Date.now()}`,
+            role: 'bot',
+            content: '',
+            scriptOffered: data.script_offered || false,
+            scriptId: data.script_id || null,
+            scriptMetadata: data.script_metadata || null,
+            timestamp: new Date().toISOString()
+          };
+          setMessages(prev => [...prev, botMsg]);
+          saveMessageToFirestore(user.email, chatId, botMsg);
+          simulateStreaming(data.message || '');
+        }, 300);
       } else {
-        setMessages(prev => [...prev.slice(0, -1), botMsg]);
+        const botMsg = {
+          id: `bot-${Date.now()}`,
+          role: 'bot',
+          content: '',
+          scriptOffered: data.script_offered || false,
+          scriptId: data.script_id || null,
+          scriptMetadata: data.script_metadata || null,
+          timestamp: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, botMsg]);
         simulateStreaming(data.message || '');
       }
     } catch (e) {
       console.error('Voice message error:', e);
+      setMessages(prev => [
+        ...prev.filter(msg => msg.id !== loadingMessage.id),
+        { 
+          id: `error-${Date.now()}`,
+          role: 'bot', 
+          content: 'Voice processing failed. Please try again.',
+          timestamp: new Date().toISOString()
+        }
+      ]);
     } finally {
       setIsLoading(false);
     }
   };
 
   const simulateStreaming = (fullText) => {
-    let index = 0;
-    const interval = setInterval(() => {
-      if (index >= fullText.length) {
-        clearInterval(interval);
-        return;
-      }
+  if (!fullText) return;
+
+  let index = 0;
+  let currentText = '';
+
+  const streamNextChunk = () => {
+    if (index < fullText.length) {
+      currentText += fullText[index];
       setMessages(prev => {
         const updated = [...prev];
-        const last = updated[updated.length - 1];
-        updated[updated.length - 1] = {
-          ...last,
-          content: (last.content || '') + fullText[index]
-        };
+        const lastIndex = updated.length - 1;
+
+        if (lastIndex >= 0 && updated[lastIndex].role === 'bot') {
+          updated[lastIndex] = {
+            ...updated[lastIndex],
+            content: currentText,
+            isLoading: true,
+          };
+        }
+
         return updated;
       });
+
       index++;
-    }, 20); // adjust speed as needed
-  };
-
-  const sendMessage = async (messageText = input) => {
-    if (!messageText.trim() || isLoading) return;
-
-    const userMsg = { role: 'user', content: normalizeText(messageText) };
-    setInput('');
-    setMessages(prev => [...prev, userMsg, { role: 'bot', content: '' }]);
-    setIsLoading(true);
-
-    try {
-      const response = await fetch('http://192.168.1.11:8000/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: user?.email,
-          message: userMsg.content,
-          model: 'openai/gpt-4o-mini'
-        }),
-      });
-
-      const data = await response.json();
-      simulateStreaming(data.message || 'No response');
-
-    } catch (e) {
-      console.error('Chat error:', e);
+      setTimeout(streamNextChunk, 20); // adjust speed here
+    } else {
+      // Finish streaming: turn off loading
       setMessages(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = { role: 'bot', content: 'Server error. Try again.' };
+        const lastIndex = updated.length - 1;
+
+        if (lastIndex >= 0 && updated[lastIndex].role === 'bot') {
+          updated[lastIndex] = {
+            ...updated[lastIndex],
+            isLoading: false,
+          };
+        }
+
         return updated;
       });
-    } finally {
-      setIsLoading(false);
     }
   };
+
+  // Initial trigger
+  streamNextChunk();
+};
+
+
+const sendMessage = async (messageText = input) => {
+  if (!messageText.trim() || isLoading) return;
+
+  const userMsg = {
+    id: `user-${Date.now()}`,
+    role: 'user',
+    content: normalizeText(messageText),
+    timestamp: new Date().toISOString(),
+  };
+
+  const botMsg = {
+    id: `bot-${Date.now()}`,
+    role: 'bot',
+    content: '',          // leave empty for streaming
+    isLoading: true,      // show loading indicator
+    timestamp: new Date().toISOString(),
+  };
+
+  setInput('');
+  setMessages(prev => [...prev, userMsg, botMsg]);
+  setIsLoading(true);
+
+  try {
+    // Save user message to Firestore
+    await saveMessageToFirestore(user.email, chatId, userMsg);
+
+    // Fetch user profile
+    const currentUser = auth.currentUser;
+    const uid = currentUser?.uid;
+    const userProfile = await fetchUserProfile(uid);
+
+    // Call backend
+    const response = await fetch('http://192.168.1.11:8000/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: user.email,
+        message: userMsg.content,
+        model: 'openai/gpt-4o-mini',
+        user_profile: userProfile,
+      }),
+    });
+
+    const data = await response.json();
+
+    // Stream into the last bot message in messages
+    simulateStreaming(data.message || '');
+
+    // Optionally save final bot message after delay
+    setTimeout(async () => {
+      const finalBotMsg = {
+        ...botMsg,
+        content: data.message || 'No response',
+        isLoading: false,
+      };
+      await saveMessageToFirestore(user.email, chatId, finalBotMsg);
+    }, (data.message?.length || 20) * 20 + 500); // delay = chars * interval + buffer
+
+  } catch (e) {
+    console.error('Chat error:', e);
+    setMessages(prev => {
+      const updated = [...prev];
+      const lastIndex = updated.length - 1;
+      if (lastIndex >= 0 && updated[lastIndex].role === 'bot') {
+        updated[lastIndex] = {
+          ...updated[lastIndex],
+          content: 'Server error. Try again.',
+          isLoading: false,
+        };
+      }
+      return updated;
+    });
+  } finally {
+    setIsLoading(false);
+  }
+};
+
 
   const handleSubmit = () => {
     if (input.trim() && !isLoading) {
@@ -300,132 +558,184 @@ export default function ChatScreen({ route, navigation }) {
   };
 
   const renderItem = ({ item }) => (
-    <View style={[styles.msgBubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
-      <BlurView
-        intensity={item.role === 'user' ? 30 : 40}
-        tint={item.role === 'user' ? 'light' : 'dark'}
-        style={[
-          styles.glassEffect,
-          item.role === 'user' ? styles.userGlass : styles.botGlass
-        ]}
-      >
-        {item.isLoading ? (
-          <View>
-            <LoadingDots />
-            {item.isVoiceProcessing && (
-              <Text style={[styles.msgText, styles.botText, { fontSize: 12, opacity: 0.7, marginTop: 8 }]}>
-                Processing voice message...
-              </Text>
-            )}
-          </View>
-        ) : (
-          <Text style={[styles.msgText, item.role === 'user' ? styles.userText : styles.botText]}>
+  <View style={[styles.msgBubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
+    <View
+      style={[
+        styles.glassEffect,
+        item.role === 'user' ? styles.userGlass : styles.botGlass,
+        item.isVoiceTranscription && styles.voiceTranscriptionGlass
+      ]}
+    >
+      {item.isLoading ? (
+        // This is the loading state - let's make it more visible
+        <View style={styles.loadingMessageContainer}>
+          <ActivityIndicator size="small" color="#FF4800" />
+          <Text style={styles.processingText}>
+            {item.isVoiceProcessing ? "Processing voice..." : "Loading..."}
+          </Text>
+        </View>
+      ) : (
+        <View>
+          <Text style={[
+            styles.msgText, 
+            item.role === 'user' ? styles.userText : styles.botText,
+            item.isVoiceTranscription && styles.voiceTranscriptionText
+          ]}>
             {item.content}
           </Text>
-        )}
-      </BlurView>
-    </View>
-  );
-return (
-  <View style={styles.container}>
-    <StatusBar barStyle="light-content" backgroundColor="#000000" />
-
-    {/* Main Content with Gradient */}
-    <LinearGradient
-      colors={['#000000', '#000000', '#FF4800']}
-      locations={[0, 0.4, 1]}
-      start={{ x: 0, y: 0.2 }}
-      end={{ x: 1, y: 0.9 }}
-      style={styles.gradient}
-    >
-      {/* Logo Header */}
-      <View style={styles.header}>
-        <BlurView intensity={20} tint="dark" style={styles.headerBlur}>
-          <Image 
-            source={require('../assets/ekologo.png')} 
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        </BlurView>
-      </View>
-
-      {/* Chat Messages */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        keyExtractor={(item, index) => index.toString()}
-        renderItem={renderItem}
-        contentContainerStyle={[
-          styles.chatContent,
-          { paddingBottom: keyboardVisible ? 20 : 100 }
-        ]}
-        style={styles.chatList}
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => {
-          if (flatListRef.current && messages.length > 0) {
-            flatListRef.current.scrollToEnd({ animated: false });
-          }
-        }}
-      />
-    </LinearGradient>
-
-    {/* Input Bar with Voice Support */}
-    <View style={[styles.inputAreaContainer, { bottom: keyboardVisible ? keyboardHeight : 61 }]}>
-        <View intensity={80} tint="dark" style={styles.inputBlur}>
-          <Animated.View style={styles.inputContainer}>
-            <TextInput
-              ref={inputRef}
-              placeholder={recordingIndicator || "Ask me anything..."}
-              placeholderTextColor={recordingIndicator ? "#FF4800" : "rgba(255,255,255,0.4)"}
-              value={input}
-              onChangeText={setInput}
-              style={[
-                styles.input,
-                recordingIndicator && styles.inputRecording
-              ]}
-              onSubmitEditing={handleSubmit}
-              returnKeyType="send"
-              multiline={false}
-              blurOnSubmit={false}
-              editable={!isLoading && !isProcessingVoice}
-            />
-            {/* Always show both buttons */}
-            <TouchableOpacity 
-              onPress={handleSubmit} 
-              style={styles.sendBtn}
-              disabled={isLoading || isProcessingVoice}
-            >
-              <Ionicons name="chevron-forward" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Animated.View style={{ transform: [{ scale: recordingButtonScale }] }}>
-              <TouchableOpacity 
-                onPressIn={startRecording}
-                onPressOut={stopRecording}
-                style={[
-                  styles.voiceBtn,
-                  isRecording && styles.voiceBtnActive,
-                  (!hasAudioPermission || isLoading || isProcessingVoice) && styles.voiceBtnDisabled
-                ]}
-                disabled={!hasAudioPermission || isLoading || isProcessingVoice}
-              >
-                {isProcessingVoice ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Ionicons 
-                    name={isRecording ? "mic" : "mic-outline"} 
-                    size={24} 
-                    color={isRecording ? "#FF4800" : "#FFFFFF"} 
-                  />
-                )}
-              </TouchableOpacity>
-            </Animated.View>
-          </Animated.View>
+          <Text style={[
+            styles.timestampText,
+            item.role === 'user' ? styles.userTimestamp : styles.botTimestamp
+          ]}>
+            {formatMessageTime(item.timestamp)}
+          </Text>
         </View>
-      </View>
+      )}
+    </View>
+  </View>
+);
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#000000" />
+
+      {/* Main Content with Gradient */}
+      <LinearGradient
+        colors={['#000000', '#000000', '#FF4800']}
+        locations={[0, 0.4, 1]}
+        start={{ x: 0, y: 0.2 }}
+        end={{ x: 1, y: 0.9 }}
+        style={styles.gradient}
+      >
+        {/* Logo Header */}
+        <View style={styles.header}>
+          <BlurView intensity={20} tint="dark" style={styles.headerBlur}>
+            <Image 
+              source={require('../assets/ekologo.png')} 
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </BlurView>
+        </View>
+
+        {/* Chat Messages */}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={(item) => item.id || item.timestamp}
+          renderItem={renderItem}
+          contentContainerStyle={[
+            styles.chatContent,
+            { paddingBottom: keyboardVisible ? 20 : 100 }
+          ]}
+          style={styles.chatList}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => {
+            if (flatListRef.current && messages.length > 0) {
+              flatListRef.current.scrollToEnd({ animated: false });
+            }
+          }}
+        />
+      </LinearGradient>
+
+      {/* WhatsApp-Style Input Bar */}
+      <Animated.View style={[styles.inputAreaContainer, { bottom: inputBottom }]}>
+        <BlurView intensity={80} tint="dark" style={styles.inputBlur}>
+          <View style={styles.whatsappInputContainer}>
+            {/* Main Input Container */}
+            <View style={styles.inputRow}>
+              <View style={styles.textInputContainer}>
+                <TextInput
+                  ref={inputRef}
+                  placeholder={recordingIndicator || "Type a message..."}
+                  placeholderTextColor={recordingIndicator ? "#FF4800" : "rgba(255,255,255,0.6)"}
+                  value={input}
+                  onChangeText={setInput}
+                  style={styles.whatsappInput}
+                  onSubmitEditing={handleSubmit}
+                  returnKeyType="send"
+                  multiline={true}
+                  maxLength={500}
+                  editable={!isLoading && !isProcessingVoice && !isRecording}
+                />
+                
+                {/* Voice Button Inside Input */}
+                {input.trim().length === 0 && (
+                  <Animated.View 
+                    style={[
+                      styles.inlineVoiceButton,
+                      { 
+                        opacity: voiceButtonOpacity,
+                        transform: [
+                          { scale: Animated.multiply(voiceButtonScale, recordingPulse) }
+                        ]
+                      }
+                    ]}
+                  >
+                    <TouchableOpacity 
+                      onPressIn={startRecording}
+                      onPressOut={stopRecording}
+                      style={[
+                        styles.voiceBtnInline,
+                        isRecording && styles.voiceBtnRecording,
+                        (!hasAudioPermission || isLoading || isProcessingVoice) && styles.voiceBtnDisabled
+                      ]}
+                      disabled={!hasAudioPermission || isLoading || isProcessingVoice}
+                      activeOpacity={0.7}
+                    >
+                      {isProcessingVoice ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Ionicons 
+                          name={isRecording ? "mic" : "mic-outline"} 
+                          size={20} 
+                          color={isRecording ? "#FF4800" : "#FFFFFF"} 
+                        />
+                      )}
+                    </TouchableOpacity>
+                  </Animated.View>
+                )}
+              </View>
+
+              {/* Send Button */}
+              <Animated.View 
+                style={[
+                  styles.sendButtonContainer,
+                  { transform: [{ scale: sendButtonScale }] }
+                ]}
+              >
+                <TouchableOpacity 
+                  onPress={handleSubmit} 
+                  style={styles.whatsappSendBtn}
+                  disabled={isLoading || isProcessingVoice || !input.trim()}
+                >
+                  <Ionicons name="send" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+
+            {/* Recording Indicator */}
+            {(isRecording || isProcessingVoice) && (
+              <View style={styles.recordingIndicatorContainer}>
+                <View style={styles.recordingIndicatorDot} />
+                <Text style={styles.recordingIndicatorText}>
+                  {recordingIndicator}
+                </Text>
+              </View>
+            )}
+          </View>
+        </BlurView>
+      </Animated.View>
 
       {/* Bottom Nav Bar */}
       {!keyboardVisible && (
         <View style={styles.navbarContainer}>
+          <View style={styles.activeNavItemContainer}>
+            <TouchableOpacity style={styles.activeNavItem}>
+              <Ionicons name="chatbubble" size={24} color="#FF4800" />
+              <Text style={styles.activeNavLabel}>CHAT</Text>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
             style={styles.navItem}
             onPress={() => navigation.navigate('UserProfile')}
@@ -433,20 +743,12 @@ return (
             <Ionicons name="person-outline" size={24} color="#FFFFFF" />
             <Text style={styles.navLabel}>PROFILE</Text>
           </TouchableOpacity>
-
-          <View style={styles.activeNavItemContainer}>
-            <TouchableOpacity style={styles.activeNavItem}>
-              <Ionicons name="chatbubble" size={24} color="#FF4800" />
-              <Text style={styles.activeNavLabel}>CHAT</Text>
-            </TouchableOpacity>
-          </View>
-
           <TouchableOpacity
             style={styles.navItem}
-            onPress={() => navigation.navigate('ChatHome')}
+            onPress={() => navigation.navigate('ChatHistory')}
           >
-            <Ionicons name="home-outline" size={24} color="#FFFFFF" />
-            <Text style={styles.navLabel}>HOME</Text>
+            <Ionicons name="time" size={24} color="#FFFFFF" />
+            <Text style={styles.navLabel}>HISTORY</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -503,13 +805,23 @@ const styles = StyleSheet.create({
   },
   userGlass: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   botGlass: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  voiceTranscriptionGlass: {
+    backgroundColor: 'rgba(255, 72, 0, 0.1)',
+    borderColor: 'rgba(255, 72, 0, 0.3)',
+  },
+  voiceTranscriptionText: {
+    color: '#FFB366',
   },
   msgText: {
     fontSize: 14,
     lineHeight: 20,
+    marginBottom: 6,
   },
   userText: {
     color: '#FFFFFF',
@@ -517,98 +829,125 @@ const styles = StyleSheet.create({
   botText: {
     color: '#FFFFFF',
   },
-  // Loading animation styles
+  // WhatsApp-style timestamps
+  timestampText: {
+    fontSize: 11,
+    opacity: 0.7,
+    alignSelf: 'flex-end',
+    marginTop: 4,
+  },
+  userTimestamp: {
+    color: '#FFFFFF',
+  },
+  botTimestamp: {
+    color: '#FFFFFF',
+  },
+  // Fixed Loading animation styles
   loadingMessageContainer: {
-    alignSelf: 'flex-start',
-    marginHorizontal: 16,
-    marginBottom: 16,
-    maxWidth: '85%',
-  },
-  loadingMessageBlur: {
-    borderRadius: 20,
-    padding: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    borderColor: 'rgba(255, 72, 0, 0.3)',
-    borderBottomLeftRadius: 5,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  padding: 10,
+  justifyContent: 'center',
+  alignItems: 'center',
+  minHeight: 50,
+},
+processingText: {
+  fontSize: 14,
+  fontWeight: '500',
+  color: '#FF4800',
+  textAlign: 'center',
+  marginTop: 8,
+},
+  // WhatsApp-style input area
+  inputAreaContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  loadingDot: {
+  inputBlur: {
+    borderRadius: 25,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  whatsappInputContainer: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  textInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: 'rgba(50, 50, 50, 0.7)',
+    borderRadius: 25,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginRight: 8,
+    minHeight: 50,
+    maxHeight: 120,
+  },
+    whatsappInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
+    maxHeight: 100,
+  },
+  inlineVoiceButton: {
+    marginLeft: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  voiceBtnInline: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  voiceBtnRecording: {
+    backgroundColor: 'rgba(255, 72, 0, 0.3)',
+    borderWidth: 1,
+    borderColor: '#FF4800',
+  },
+  voiceBtnDisabled: {
+    opacity: 0.5,
+  },
+  sendButtonContainer: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  whatsappSendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF4800',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recordingIndicatorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingHorizontal: 12,
+  },
+  recordingIndicatorDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#FF4800',
-    marginHorizontal: 2,
-  },
-  // Input area styling
-  inputAreaContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
-  inputBlur: {
-    overflow: 'hidden',
-    paddingVertical: 0,
-    backgroundColor: 'transparent',
-    borderTopWidth: 0,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 0,
-    paddingVertical: 4,
-  },
-  input: {
-    flex: 1,
-    color: '#fff',
-    backgroundColor: 'rgba(50, 50, 50, 0.5)',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    height: 50,
-    fontSize: 16,
-    borderWidth: 0,
-    marginLeft: 8,
     marginRight: 8,
   },
-  sendBtn: {
-    marginLeft: 8,
-    backgroundColor: '#000000',
-    width: 45,
-    height: 45,
-    borderRadius: 20,
-    borderColor: '#000000',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  // Voice button styles
-  voiceBtn: {
-    marginLeft: 8,
-    backgroundColor: '#000000',
-    width: 45,
-    height: 45,
-    borderRadius: 20,
-    borderColor: '#000000',
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  voiceBtnActive: {
-    backgroundColor: 'rgba(255, 72, 0, 0.2)',
-    borderColor: '#FF4800',
-    borderWidth: 2,
-  },
-  voiceBtnDisabled: {
-    opacity: 0.5,
+  recordingIndicatorText: {
+    color: '#FF4800',
+    fontSize: 12,
   },
   // Bottom Navigation Styles
   navbarContainer: {
@@ -622,11 +961,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(20, 20, 20, 0.9)',
     borderTopWidth: 0.5,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
   navItem: {
     alignItems: 'center',
     justifyContent: 'center',
     flex: 1,
+    paddingVertical: 8,
   },
   activeNavItemContainer: {
     flex: 1,
@@ -636,6 +977,7 @@ const styles = StyleSheet.create({
   activeNavItem: {
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 8,
   },
   navLabel: {
     color: '#FFFFFF',
@@ -646,6 +988,7 @@ const styles = StyleSheet.create({
     color: '#FF4800',
     fontSize: 10,
     marginTop: 4,
+    fontWeight: '600',
   },
   // Script container styles
   scriptContainer: {
@@ -667,9 +1010,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
     opacity: 0.9,
   },
-  inputRecording: {
-    borderColor: '#FF4800',
-    borderWidth: 1,
-  },
-
+  loadingMessageContainer: {
+  minHeight: 40,
+  justifyContent: 'center',
+  alignItems: 'center',
+},
 });

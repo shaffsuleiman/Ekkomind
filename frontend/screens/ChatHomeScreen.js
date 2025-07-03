@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { auth } from '../firebase'; // Ensure auth is imported correctly
 
 const suggestions = [
   'Relieve Stress',
@@ -23,8 +24,7 @@ const suggestions = [
 ];
 
 export default function ChatHomeScreen({ route, navigation }) {
-  const { name = 'Julien' } = route.params || {};
-
+  const name = (auth.currentUser?.displayName?.split(' ')[0]) || 'Guest'; // Get the user's first name from Firebase auth
   const handleSuggestionPress = (suggestion) => {
     navigation.navigate('Chat', { promptText: suggestion });
   };
@@ -138,6 +138,13 @@ export default function ChatHomeScreen({ route, navigation }) {
         
         {/* Bottom Navigation Bar */}
         <View style={styles.bottomNavbar}>
+            <TouchableOpacity
+            style={styles.navItem}
+            onPress={() => navigation.navigate('Chat')}
+          >
+            <Ionicons name="chatbubble-outline" size={24} color="rgba(255,255,255,0.7)" />
+            <Text style={styles.navLabel}>CHAT</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.navItem}
             onPress={() => navigation.navigate('UserProfile')}
@@ -146,20 +153,22 @@ export default function ChatHomeScreen({ route, navigation }) {
             <Text style={styles.navLabel}>PROFILE</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={styles.navItem}
             onPress={() => navigation.navigate('Chat')}
           >
             <Ionicons name="chatbubble-outline" size={24} color="rgba(255,255,255,0.7)" />
             <Text style={styles.navLabel}>CHAT</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           <TouchableOpacity
             style={[styles.navItem, styles.activeNavItem]}
+            onPress={() => navigation.navigate('ChatHistory')}
           >
-            <Ionicons name="home" size={24} color="#FF4800" />
-            <Text style={[styles.navLabel, styles.activeNavLabel]}>HOME</Text>
+            <Ionicons name="time" size={24} color="#FF4800" />
+            <Text style={[styles.navLabel, styles.activeNavLabel]}>History</Text>
           </TouchableOpacity>
+          
         </View>
       </SafeAreaView>
     </LinearGradient>

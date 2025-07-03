@@ -130,7 +130,10 @@ export default function ProfileScreen({ navigation }) {
         onPress: async () => {
           try {
             await auth.signOut();
-            // No need to navigate - auth state change will handle it
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Onboarding' }],
+            });
           } catch (error) {
             Alert.alert('Error', 'Failed to sign out');
           }
@@ -139,6 +142,7 @@ export default function ProfileScreen({ navigation }) {
     ]
   );
 };
+
 
 
   return (
@@ -284,6 +288,19 @@ export default function ProfileScreen({ navigation }) {
                   <TouchableOpacity style={styles.editProfileButton} onPress={() => setEditing(true)}>
                     <Text style={styles.editProfileText}>EDIT PROFILE</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.editProfileButton, { backgroundColor: '#444' }]}
+                    onPress={() => navigation.navigate('ChatHistory')}
+                  >
+                    <Text style={styles.editProfileText}>VIEW CHAT HISTORY</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.signOutButton}
+                  onPress={handleSignOut}
+                >
+                  <Text style={styles.signOutText}>SIGN OUT</Text>
+                </TouchableOpacity>
+
 
                 </>
               )}
@@ -294,6 +311,13 @@ export default function ProfileScreen({ navigation }) {
         {!keyboardVisible && (
           <View style={styles.navbarContainer}>
             <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => navigation.navigate('Chat')}
+            >
+              <Ionicons name="chatbubble-outline" size={24} color="#FFFFFF" />
+              <Text style={styles.navLabel}>CHAT</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               style={styles.activeNavItemContainer}
             >
               <Ionicons name="person" size={24} color="#FF4800" />
@@ -302,18 +326,10 @@ export default function ProfileScreen({ navigation }) {
 
             <TouchableOpacity
               style={styles.navItem}
-              onPress={() => navigation.navigate('Chat')}
+              onPress={() => navigation.navigate('ChatHistory')}
             >
-              <Ionicons name="chatbubble-outline" size={24} color="#FFFFFF" />
-              <Text style={styles.navLabel}>CHAT</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.navItem}
-              onPress={() => navigation.navigate('ChatHome')}
-            >
-              <Ionicons name="home-outline" size={24} color="#FFFFFF" />
-              <Text style={styles.navLabel}>HOME</Text>
+              <Ionicons name="time" size={24} color="#FFFFFF" />
+              <Text style={styles.navLabel}>HISTORY</Text>
             </TouchableOpacity>
         </View>
         )}

@@ -4,7 +4,7 @@ import re
 import time # For searching files
 from openai import OpenAI # Use OpenAI library structure for OpenRouter
 from dotenv import load_dotenv
-from typing import Iterable, List, Set, Dict, Any, Tuple
+from typing import Iterable, List, Set, Dict, Any
 from clinical_cases_rag import fetch_clinical_cases, analyze_solution_delivery
 from script_loader import ScriptLoader
 import threading
@@ -312,44 +312,65 @@ class TherapeuticChatbot:
         return prompt
     
    
-    def _build_system_prompt(self, clinical_guidance: str, json_output: bool = True, custom_template: dict = None) -> str:
+    def _build_system_prompt(
+        self,
+        clinical_guidance: str,
+        json_output: bool = True,
+        custom_template: dict = None,
+        user_profile: dict = None  # ✅ NEW
+    ) -> str:
         """Build system prompt with clinical case guidance and JSON output instructions."""
         has_guidance = True if clinical_guidance else False
-        
-        # Use custom template if provided, otherwise use default
+
+        # ✅ User profile section
+        profile_string = ""
+        if user_profile:
+            fields = []
+            if 'name' in user_profile:
+                fields.append(f"Name: {user_profile['name']}")
+            if 'age' in user_profile:
+                fields.append(f"Age: {user_profile['age']}")
+            if 'gender' in user_profile:
+                fields.append(f"Gender: {user_profile['gender']}")
+            if 'bio' in user_profile:
+                fields.append(f"Bio: {user_profile['bio']}")
+            if fields:
+                profile_string = "User Profile:\n" + "\n".join(fields) + "\n\n"
+
         if custom_template:
             prompt = self._build_custom_prompt(clinical_guidance, custom_template)
         else:
-            # Default prompt (existing logic)
-            prompt = f"""You are a supportive, empathetic therapist. Your goal is to respond to the user in a warm, validating, and thoughtful way.
+            prompt = (
+                profile_string +
+                f"""You are a supportive, empathetic therapist. Your goal is to respond to the user in a warm, validating, and thoughtful way.
 
 {"Here are clinical patterns and therapeutic approaches that may help with this conversation:" if has_guidance else ""}
 {clinical_guidance}
-
 """
-        
+            )
+
         if json_output:
             prompt += """
 Important: Return your response in JSON format with these keys:
 {
     "Response": "Your response to the user",
-    "Activity_offered": true/false (Set to true when appropriate to offer a guided exercise otherwise false)
+    "Activity_offered": true/false
 }
 
 For the "Activity_offered" field:
-- Set to TRUE ONLY when all of these conditions are met:
+- Set to TRUE ONLY when:
     1. The conversation has established good rapport
     2. You have a clear understanding of the user's specific issue
     3. A structured activity would be therapeutic at this moment
     4. You've already provided some initial validation and support
 - Otherwise, set to FALSE
 
-DO NOT offer an activity in the first few exchanges. Focus on understanding and validating the user first.
-            """
+DO NOT offer an activity in the first few exchanges.
+"""
 
         print("\n-- System Prompt Start --\n", prompt, "\n-- System Prompt End --\n")
-
         return prompt
+
     
     def _build_custom_prompt(self, clinical_guidance: str, custom_template: dict) -> str:
         """Build prompt using custom template values."""
@@ -461,104 +482,94 @@ Return as JSON:
         }
 
     @compute_time
-    def process_message(self, user_message: str, session_id: str = "default", model=None, custom_template: dict = None) -> dict | str:
+    def process_message(
+        self,
+        user_message: str,
+        session_id: str = "default",
+        model=None,
+        custom_template: dict = None,
+        user_profile: dict = None  # ✅ NEW
+    ) -> dict | str:
         """Processes a user message and returns the assistant's response."""
-        # Initialize LLM client and model
         model = model or "openai/gpt-4o-mini"
         print("Using model:", model)
         llm = LLMClient(api_key=OPENROUTER_API_KEY, model_id=model)
-        
-        # Get/create session and update history
+
         session = self._get_or_create_session(session_id)
         session.add_message("user", user_message)
 
-        # Extract conversation history for keyword identification
         history_str = session.format_history_for_prompt()
-        
-        # Extract symptoms from the conversation
+
+        symptoms = []
         if len(session.current_cases) < 3:
             keyword_prompt = self._build_keyword_identifier_prompt(history_str)
-            keyword_response = llm.send_prompt(keyword_prompt, temperature=0.7, extract_json=True)  
+            keyword_response = llm.send_prompt(keyword_prompt, temperature=0.7, extract_json=True)
             if keyword_response and isinstance(keyword_response, dict):
                 symptoms = keyword_response.get("symptoms", [])
             else:
                 print("⚠️ Warning: Keyword extraction failed or returned invalid format.")
-                symptoms = []
 
-        
-        # Fetch clinical cases based on symptoms and latest message
         clinical_guidance, matched_cases = fetch_clinical_cases(
-            symptoms=symptoms, 
+            symptoms=symptoms,
             user_message=user_message,
             session=session
         )
-        
+
         print(f"Matched clinical cases: {session.current_cases}")
         print(f"Clinical guidance: {clinical_guidance}")
-        
-        # Build system prompt with clinical guidance
-        system_prompt = self._build_system_prompt(clinical_guidance=clinical_guidance, custom_template=custom_template, json_output=True)
 
-        # Construct messages for LLM
+        # ✅ Pass user_profile to prompt
+        system_prompt = self._build_system_prompt(
+            clinical_guidance=clinical_guidance,
+            custom_template=custom_template,
+            json_output=True,
+            user_profile=user_profile
+        )
+
         messages = [
             {"role": "system", "content": system_prompt},
             *session.conversation_history
         ]
-        
-        # Get response from LLM
+
         ai_response = llm.send_prompt(prompt=None, messages=messages, temperature=0.8, extract_json=True)
         print(f"AI Response: {ai_response}")
-        
-        # Handle potential failure
+
         if not ai_response:
             print("ERROR: Failed to generate response from LLM. Using fallback.")
             response_text = "I understand. It sounds like a difficult situation. Could you tell me a little more about that?"
             activity_offered = False
         else:
-            # Extract data from JSON response
             try:
                 if isinstance(ai_response, str):
                     ai_response = json.loads(ai_response)
-                    
                 response_text = ai_response.get("Response", "")
                 activity_offered = ai_response.get("Activity_offered", False)
             except Exception as e:
                 print(f"Error parsing LLM response as JSON: {e}")
                 response_text = ai_response if isinstance(ai_response, str) else "I understand. Could you tell me more?"
                 activity_offered = False
-        
-        # Add assistant response to session history
+
         session.add_message("assistant", response_text)
-        
-        # Start solution delivery analysis in background thread (non-blocking)
+
         if matched_cases:
-            analysis_thread = threading.Thread(
+            threading.Thread(
                 target=self._analyze_solutions_async,
                 args=(response_text, matched_cases.copy(), llm, session),
-                daemon=True  # Thread will die when main program exits
-            )
-            analysis_thread.start()
+                daemon=True
+            ).start()
             print("Started solution delivery analysis in background thread")
-        
-        # Check message count for activity offering
-        message_count = len(session.conversation_history) // 2  # Count exchanges, not individual messages
+
+        message_count = len(session.conversation_history) // 2
         if activity_offered and message_count <= 2:
             print(f"Script offering suppressed - too early in conversation (message count: {message_count})")
             activity_offered = False
-        
-        # Handle script/activity if offered
+
         if activity_offered:
-            # Get script based on symptoms and user profile
             script_result = self._get_appropriate_script(symptoms, session, model)
-            
-            # Check if script has a good enough score
-            if script_result and script_result.get("match_score", 0) >= 10:  # Minimum threshold
+            if script_result and script_result.get("match_score", 0) >= 10:
                 script_id = script_result.get("script_id")
-                
-                # Track that this script has been offered
                 if script_id:
                     session.add_offered_script(script_id)
-                
                 return {
                     "response": response_text,
                     "script_id": script_id,
@@ -568,6 +579,5 @@ Return as JSON:
                 }
             else:
                 print(f"Script rejected - match score too low: {script_result.get('match_score', 0) if script_result else 0}")
-                
-        # Return normal response if no script offered or match score too low
+
         return response_text

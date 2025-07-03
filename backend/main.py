@@ -41,6 +41,8 @@ class ChatRequest(BaseModel):
     email: str
     message: str
     model: Optional[str] = "openai/gpt-4o-mini"
+    user_profile: Optional[Dict[str, Any]] = None  
+
 
 # Define response model
 class ChatResponse(BaseModel):
@@ -63,7 +65,8 @@ async def chat(request: ChatRequest):
         response = chatbot.process_message(
             user_message=request.message,
             session_id=session_id,
-            model=request.model
+            model=request.model,
+            user_profile=request.user_profile
         )
         
         # Handle different response formats
