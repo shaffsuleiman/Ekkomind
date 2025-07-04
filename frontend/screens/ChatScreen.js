@@ -118,8 +118,6 @@ const BlinkingProcessingText = () => {
   );
 };
 
-
-
 // Format time like WhatsApp
 const formatMessageTime = (timestamp) => {
   if (!timestamp) return '';
@@ -150,6 +148,7 @@ export default function ChatScreen({ route, navigation }) {
   const [sound, setSound] = useState();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState(null);
 
   const [chatId] = useState(() => {
     return route.params?.chatId || uuid.v4();
@@ -238,20 +237,24 @@ export default function ChatScreen({ route, navigation }) {
     if (promptText) sendMessage(promptText);
   }, [promptText]);
 
+  // Auto-scroll when new messages are added or content changes
   useEffect(() => {
-    const timer = setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 150);
-    return () => clearTimeout(timer);
+    if (flatListRef.current && messages.length > 0) {
+      setTimeout(() => {
+        flatListRef.current.scrollToEnd({ animated: true });
+      }, 100);
+    }
   }, [messages]);
 
   useEffect(() => {
     return sound ? () => sound.unloadAsync() : undefined;
   }, [sound]);
 
-  // WhatsApp-style input animations
+  // Fixed WhatsApp-style input animations - send button should always be visible when there's text
   useEffect(() => {
-    if (input.trim().length > 0) {
+    const hasText = input.trim().length > 0;
+    
+    if (hasText) {
       // Show send button, hide voice button
       Animated.parallel([
         Animated.timing(voiceButtonOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
@@ -281,6 +284,12 @@ export default function ChatScreen({ route, navigation }) {
       recordingPulse.setValue(1);
     }
   }, [isRecording]);
+
+  useEffect(() => {
+  if (flatListRef.current) {
+    flatListRef.current.scrollToEnd({ animated: true });
+  }
+  }, [streamingMessageId, messages]);
 
   const playBeepSound = async () => {
     try {
@@ -357,7 +366,7 @@ export default function ChatScreen({ route, navigation }) {
       formData.append('email', user?.email);
       formData.append('model', "openai/gpt-4o-mini");
 
-      const response = await fetch('http://192.168.1.11:8000/voiceinput', {
+      const response = await fetch('http://192.168.1.8:8000/voiceinput', {
         method: 'POST',
         headers: { 'Content-Type': 'multipart/form-data' },
         body: formData,
@@ -393,7 +402,7 @@ export default function ChatScreen({ route, navigation }) {
           };
           setMessages(prev => [...prev, botMsg]);
           saveMessageToFirestore(user.email, chatId, botMsg);
-          simulateStreaming(data.message || '');
+          simulateStreaming(data.message || '', botMsg.id);
         }, 300);
       } else {
         const botMsg = {
@@ -406,7 +415,7 @@ export default function ChatScreen({ route, navigation }) {
           timestamp: new Date().toISOString()
         };
         setMessages(prev => [...prev, botMsg]);
-        simulateStreaming(data.message || '');
+        simulateStreaming(data.message || '', botMsg.id);
       }
     } catch (e) {
       console.error('Voice message error:', e);
@@ -424,132 +433,136 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
-  const simulateStreaming = (fullText) => {
-  if (!fullText) return;
+  // Fixed streaming function with proper message ID targeting
+  const simulateStreaming = (fullText, messageId) => {
+    if (!fullText || !messageId) return;
 
-  let index = 0;
-  let currentText = '';
+    setStreamingMessageId(messageId);
+    let index = 0;
+    let currentText = '';
 
-  const streamNextChunk = () => {
-    if (index < fullText.length) {
-      currentText += fullText[index];
-      setMessages(prev => {
-        const updated = [...prev];
-        const lastIndex = updated.length - 1;
+    const streamNextChunk = () => {
+      if (index < fullText.length) {
+        // Add characters in chunks for more realistic streaming
+        const chunkSize = Math.max(1, Math.floor(Math.random() * 3) + 1);
+        const nextChunk = fullText.slice(index, index + chunkSize);
+        currentText += nextChunk;
+        index += chunkSize;
 
-        if (lastIndex >= 0 && updated[lastIndex].role === 'bot') {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            content: currentText,
-            isLoading: true,
-          };
-        }
+        setMessages(prev => {
+          return prev.map(msg => {
+            if (msg.id === messageId) {
+              return {
+                ...msg,
+                content: currentText,
+                isLoading: true,
+              };
+            }
+            return msg;
+          });
+        });
 
-        return updated;
+        // Variable delay for more natural streaming
+        const delay = Math.random() * 50 + 10; // 10-60ms delay
+        setTimeout(streamNextChunk, delay);
+      } else {
+        // Finish streaming
+        setMessages(prev => {
+          return prev.map(msg => {
+            if (msg.id === messageId) {
+              return {
+                ...msg,
+                content: currentText,
+                isLoading: false,
+              };
+            }
+            return msg;
+          });
+        });
+        setStreamingMessageId(null);
+      }
+    };
+
+    // Start streaming
+    streamNextChunk();
+  };
+
+  const sendMessage = async (messageText = input) => {
+    if (!messageText.trim() || isLoading) return;
+
+    const userMsg = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: normalizeText(messageText),
+      timestamp: new Date().toISOString(),
+    };
+
+    const botMsg = {
+      id: `bot-${Date.now()}`,
+      role: 'bot',
+      content: '',
+      isLoading: true,
+      timestamp: new Date().toISOString(),
+    };
+
+    setInput('');
+    setMessages(prev => [...prev, userMsg, botMsg]);
+    setIsLoading(true);
+
+    try {
+      // Save user message to Firestore
+      await saveMessageToFirestore(user.email, chatId, userMsg);
+
+      // Fetch user profile
+      const currentUser = auth.currentUser;
+      const uid = currentUser?.uid;
+      const userProfile = await fetchUserProfile(uid);
+
+      // Call backend
+      const response = await fetch('http://192.168.1.8:8000/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user.email,
+          message: userMsg.content,
+          model: 'openai/gpt-4o-mini',
+          user_profile: userProfile,
+        }),
       });
 
-      index++;
-      setTimeout(streamNextChunk, 20); // adjust speed here
-    } else {
-      // Finish streaming: turn off loading
-      setMessages(prev => {
-        const updated = [...prev];
-        const lastIndex = updated.length - 1;
+      const data = await response.json();
 
-        if (lastIndex >= 0 && updated[lastIndex].role === 'bot') {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            isLoading: false,
-          };
-        }
+      // Start streaming with the bot message ID
+      simulateStreaming(data.message || '', botMsg.id);
 
-        return updated;
-      });
-    }
-  };
-
-  // Initial trigger
-  streamNextChunk();
-};
-
-
-const sendMessage = async (messageText = input) => {
-  if (!messageText.trim() || isLoading) return;
-
-  const userMsg = {
-    id: `user-${Date.now()}`,
-    role: 'user',
-    content: normalizeText(messageText),
-    timestamp: new Date().toISOString(),
-  };
-
-  const botMsg = {
-    id: `bot-${Date.now()}`,
-    role: 'bot',
-    content: '',          // leave empty for streaming
-    isLoading: true,      // show loading indicator
-    timestamp: new Date().toISOString(),
-  };
-
-  setInput('');
-  setMessages(prev => [...prev, userMsg, botMsg]);
-  setIsLoading(true);
-
-  try {
-    // Save user message to Firestore
-    await saveMessageToFirestore(user.email, chatId, userMsg);
-
-    // Fetch user profile
-    const currentUser = auth.currentUser;
-    const uid = currentUser?.uid;
-    const userProfile = await fetchUserProfile(uid);
-
-    // Call backend
-    const response = await fetch('http://192.168.1.11:8000/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: user.email,
-        message: userMsg.content,
-        model: 'openai/gpt-4o-mini',
-        user_profile: userProfile,
-      }),
-    });
-
-    const data = await response.json();
-
-    // Stream into the last bot message in messages
-    simulateStreaming(data.message || '');
-
-    // Optionally save final bot message after delay
-    setTimeout(async () => {
-      const finalBotMsg = {
-        ...botMsg,
-        content: data.message || 'No response',
-        isLoading: false,
-      };
-      await saveMessageToFirestore(user.email, chatId, finalBotMsg);
-    }, (data.message?.length || 20) * 20 + 500); // delay = chars * interval + buffer
-
-  } catch (e) {
-    console.error('Chat error:', e);
-    setMessages(prev => {
-      const updated = [...prev];
-      const lastIndex = updated.length - 1;
-      if (lastIndex >= 0 && updated[lastIndex].role === 'bot') {
-        updated[lastIndex] = {
-          ...updated[lastIndex],
-          content: 'Server error. Try again.',
+      // Save final bot message after streaming completes
+      setTimeout(async () => {
+        const finalBotMsg = {
+          ...botMsg,
+          content: data.message || 'No response',
           isLoading: false,
         };
-      }
-      return updated;
-    });
-  } finally {
-    setIsLoading(false);
-  }
-};
+        await saveMessageToFirestore(user.email, chatId, finalBotMsg);
+      }, (data.message?.length || 20) * 30 + 500); // Adjusted timing
 
+    } catch (e) {
+      console.error('Chat error:', e);
+      setMessages(prev => {
+        return prev.map(msg => {
+          if (msg.id === botMsg.id) {
+            return {
+              ...msg,
+              content: 'Server error. Try again.',
+              isLoading: false,
+            };
+          }
+          return msg;
+        });
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = () => {
     if (input.trim() && !isLoading) {
@@ -558,42 +571,47 @@ const sendMessage = async (messageText = input) => {
   };
 
   const renderItem = ({ item }) => (
-  <View style={[styles.msgBubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
-    <View
-      style={[
-        styles.glassEffect,
-        item.role === 'user' ? styles.userGlass : styles.botGlass,
-        item.isVoiceTranscription && styles.voiceTranscriptionGlass
-      ]}
-    >
-      {item.isLoading ? (
-        // This is the loading state - let's make it more visible
-        <View style={styles.loadingMessageContainer}>
-          <ActivityIndicator size="small" color="#FF4800" />
-          <Text style={styles.processingText}>
-            {item.isVoiceProcessing ? "Processing voice..." : "Loading..."}
-          </Text>
-        </View>
-      ) : (
-        <View>
-          <Text style={[
-            styles.msgText, 
-            item.role === 'user' ? styles.userText : styles.botText,
-            item.isVoiceTranscription && styles.voiceTranscriptionText
-          ]}>
-            {item.content}
-          </Text>
-          <Text style={[
-            styles.timestampText,
-            item.role === 'user' ? styles.userTimestamp : styles.botTimestamp
-          ]}>
-            {formatMessageTime(item.timestamp)}
-          </Text>
-        </View>
-      )}
+    <View style={[styles.msgBubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
+      <View
+        style={[
+          styles.glassEffect,
+          item.role === 'user' ? styles.userGlass : styles.botGlass,
+          item.isVoiceTranscription && styles.voiceTranscriptionGlass
+        ]}
+      >
+        {item.isLoading && !item.content ? (
+          // This is the loading state for new messages
+          <View style={styles.loadingMessageContainer}>
+            <ActivityIndicator size="small" color="#FF4800" />
+            <Text style={styles.processingText}>
+              {item.isVoiceProcessing ? "Processing voice..." : "Typing..."}
+            </Text>
+          </View>
+        ) : (
+          <View>
+            <Text style={[
+              styles.msgText, 
+              item.role === 'user' ? styles.userText : styles.botText,
+              item.isVoiceTranscription && styles.voiceTranscriptionText
+            ]}>
+              {item.content}
+            </Text>
+            {item.isLoading && (
+              <View style={styles.typingIndicator}>
+                <Text style={styles.typingText}>...</Text>
+              </View>
+            )}
+            <Text style={[
+              styles.timestampText,
+              item.role === 'user' ? styles.userTimestamp : styles.botTimestamp
+            ]}>
+              {formatMessageTime(item.timestamp)}
+            </Text>
+          </View>
+        )}
+      </View>
     </View>
-  </View>
-);
+  );
 
   return (
     <View style={styles.container}>
@@ -632,7 +650,16 @@ const sendMessage = async (messageText = input) => {
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => {
             if (flatListRef.current && messages.length > 0) {
-              flatListRef.current.scrollToEnd({ animated: false });
+              setTimeout(() => {
+                flatListRef.current.scrollToEnd({ animated: true });
+              }, 100);
+            }
+          }}
+          onLayout={() => {
+            if (flatListRef.current && messages.length > 0) {
+              setTimeout(() => {
+                flatListRef.current.scrollToEnd({ animated: false });
+              }, 100);
             }
           }}
         />
@@ -659,7 +686,7 @@ const sendMessage = async (messageText = input) => {
                   editable={!isLoading && !isProcessingVoice && !isRecording}
                 />
                 
-                {/* Voice Button Inside Input */}
+                {/* Voice Button Inside Input - Only show when no text */}
                 {input.trim().length === 0 && (
                   <Animated.View 
                     style={[
@@ -697,21 +724,23 @@ const sendMessage = async (messageText = input) => {
                 )}
               </View>
 
-              {/* Send Button */}
-              <Animated.View 
-                style={[
-                  styles.sendButtonContainer,
-                  { transform: [{ scale: sendButtonScale }] }
-                ]}
-              >
-                <TouchableOpacity 
-                  onPress={handleSubmit} 
-                  style={styles.whatsappSendBtn}
-                  disabled={isLoading || isProcessingVoice || !input.trim()}
+              {/* Send Button - Always visible when there's text */}
+              {input.trim().length > 0 && (
+                <Animated.View 
+                  style={[
+                    styles.sendButtonContainer,
+                    { transform: [{ scale: sendButtonScale }] }
+                  ]}
                 >
-                  <Ionicons name="send" size={20} color="#FFFFFF" />
-                </TouchableOpacity>
-              </Animated.View>
+                  <TouchableOpacity 
+                    onPress={handleSubmit} 
+                    style={styles.whatsappSendBtn}
+                    disabled={isLoading || isProcessingVoice || !input.trim()}
+                  >
+                    <Ionicons name="send" size={20} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </Animated.View>
+              )}
             </View>
 
             {/* Recording Indicator */}
@@ -842,36 +871,42 @@ const styles = StyleSheet.create({
   botTimestamp: {
     color: '#FFFFFF',
   },
-  // Fixed Loading animation styles
+  // Loading animation styles
   loadingMessageContainer: {
-  padding: 10,
-  justifyContent: 'center',
-  alignItems: 'center',
-  minHeight: 50,
-},
-processingText: {
-  fontSize: 14,
-  fontWeight: '500',
-  color: '#FF4800',
-  textAlign: 'center',
-  marginTop: 8,
-},
-  // WhatsApp-style input area
+    padding: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 50,
+  },
+    processingText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#FF4800',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  typingIndicator: {
+    flexDirection: 'row',
+    marginTop: 4,
+  },
+  typingText: {
+    fontSize: 18,
+    color: '#FF4800',
+    letterSpacing: 2,
+  },
   inputAreaContainer: {
     position: 'absolute',
     left: 0,
     right: 0,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
   },
   inputBlur: {
-    borderRadius: 25,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   whatsappInputContainer: {
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    flexDirection: 'column',
   },
   inputRow: {
     flexDirection: 'row',
@@ -879,54 +914,43 @@ processingText: {
   },
   textInputContainer: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    backgroundColor: 'rgba(50, 50, 50, 0.7)',
-    borderRadius: 25,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
     marginRight: 8,
-    minHeight: 50,
+    minHeight: 40,
     maxHeight: 120,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
-    whatsappInput: {
-    flex: 1,
+  whatsappInput: {
+    fontSize: 15,
     color: '#FFFFFF',
-    fontSize: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
-    maxHeight: 100,
   },
   inlineVoiceButton: {
-    marginLeft: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
   },
   voiceBtnInline: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    height: 32,
+    width: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#FF4800',
   },
   voiceBtnRecording: {
-    backgroundColor: 'rgba(255, 72, 0, 0.3)',
-    borderWidth: 1,
-    borderColor: '#FF4800',
+    backgroundColor: '#8B0000',
   },
   voiceBtnDisabled: {
-    opacity: 0.5,
+    opacity: 0.4,
   },
   sendButtonContainer: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: 'flex-end',
   },
   whatsappSendBtn: {
-    width: 40,
     height: 40,
+    width: 40,
     borderRadius: 20,
     backgroundColor: '#FF4800',
     justifyContent: 'center',
@@ -935,84 +959,47 @@ processingText: {
   recordingIndicatorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    paddingHorizontal: 12,
+    marginTop: 4,
   },
   recordingIndicatorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    height: 6,
+    width: 6,
+    borderRadius: 3,
     backgroundColor: '#FF4800',
-    marginRight: 8,
+    marginRight: 4,
   },
   recordingIndicatorText: {
-    color: '#FF4800',
     fontSize: 12,
+    color: '#FF4800',
   },
-  // Bottom Navigation Styles
   navbarContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    height: 60,
     flexDirection: 'row',
-    height: 61,
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    backgroundColor: 'rgba(20, 20, 20, 0.9)',
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  navItem: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingVertical: 8,
+    backgroundColor: '#000000',
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   activeNavItemContainer: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: 8,
   },
   activeNavItem: {
     alignItems: 'center',
-    justifyContent: 'center',
+  },
+  activeNavLabel: {
+    fontSize: 10,
+    marginTop: 2,
+    color: '#FF4800',
+  },
+  navItem: {
+    flex: 1,
+    alignItems: 'center',
     paddingVertical: 8,
   },
   navLabel: {
-    color: '#FFFFFF',
     fontSize: 10,
-    marginTop: 4,
-  },
-  activeNavLabel: {
-    color: '#FF4800',
-    fontSize: 10,
-    marginTop: 4,
-    fontWeight: '600',
-  },
-  // Script container styles
-  scriptContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: 'rgba(255, 72, 0, 0.2)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 72, 0, 0.4)',
-  },
-  scriptTitle: {
-    color: '#FF4800',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  scriptMeta: {
+    marginTop: 2,
     color: '#FFFFFF',
-    fontSize: 12,
-    marginTop: 4,
-    opacity: 0.9,
   },
-  loadingMessageContainer: {
-  minHeight: 40,
-  justifyContent: 'center',
-  alignItems: 'center',
-},
 });

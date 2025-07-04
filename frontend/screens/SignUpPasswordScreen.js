@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { createUserWithEmailAndPassword, updateProfile , sendEmailVerification} from 'firebase/auth';
 import { auth } from '../firebase';
 
 export default function SignUpPasswordScreen({ navigation, route }) {
@@ -22,9 +22,18 @@ export default function SignUpPasswordScreen({ navigation, route }) {
   try {
     const userCred = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(userCred.user, { displayName: name });
-    
-    // ✅ Navigate to UserInfoScreen directly after signup
-    navigation.replace('UserInfo');
+    // 1️⃣  send verification e-mail
+    await sendEmailVerification(userCred.user);
+
+    // 2️⃣  tell the user what to do
+    Alert.alert(
+      'Verify your address',
+      'We just sent a link to your inbox. Tap it, then come back and press “I’m Verified”.'
+    );
+
+    // 3️⃣  jump to a waiting screen
+    navigation.replace('EmailVerifyPending', { email });
+
   } catch (error) {
     Alert.alert('Signup error', error.message);
   }
