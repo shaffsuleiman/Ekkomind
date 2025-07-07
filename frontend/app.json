@@ -1,37 +1,40 @@
+
 {
   "expo": {
-    "name": "Ekomind",
+    "name": "ekkomindapp",
     "slug": "my-auth-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/image.png",
-    "userInterfaceStyle": "dark",
+    "icon": "./assets/images/icon.png",
+    "scheme": "helloapp",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "owner": "shaff.suleiman",
-    "splash": {
-      "image": "./assets/image.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#000000"
-    },
     "ios": {
-      "supportsTablet": true,
-      "backgroundColor": "#000000"
+      "supportsTablet": true
     },
     "android": {
-      "package": "com.yourcompany.yourapp",
-      "versionCode": 1,
-      "permissions": [],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splashscreen.png",
+          "imageWidth": 200,
+          "resizeMode": "cover",
+          "backgroundColor": "#ffffff"
+        }
+      ]
     ],
     "extra": {
       "eas": {
@@ -40,3 +43,4 @@
     }
   }
 }
+
