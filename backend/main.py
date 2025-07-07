@@ -55,6 +55,10 @@ class ChatResponse(BaseModel):
 class VoiceResponse(ChatResponse):
     transcribed_text: Optional[str] = None
 
+@app.get("/")
+def health_check():
+    return {"status": "healthy"}
+    
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
