@@ -5,3 +5,6 @@ requests
 openai
 qdrant-client
 python-docx
+aiofiles
+fastapi
+python-multipart
