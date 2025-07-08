@@ -8,6 +8,8 @@ import { useNavigation } from '@react-navigation/native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
 import { useGoogleAuth } from '../utils/useGoogleAuth';
+import { sendPasswordResetEmail } from 'firebase/auth';
+
 
 export default function OnboardingScreen() {
   const [email, setEmail] = useState('');
@@ -78,6 +80,10 @@ export default function OnboardingScreen() {
               onChangeText={setPassword}
             />
           </View>
+          <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
+            <Text style={styles.forgotText}>Forgot Password?</Text>
+          </TouchableOpacity>
+
 
           <View style={styles.buttonContainer}>
             <TouchableOpacity style={styles.signInButton} onPress={handleSignIn}>
@@ -92,7 +98,7 @@ export default function OnboardingScreen() {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.socialContainer}>
+          {/* <View style={styles.socialContainer}>
             <TouchableOpacity
               style={styles.googleButton}
               onPress={handleGoogleSignIn}
@@ -100,7 +106,7 @@ export default function OnboardingScreen() {
             >
               <Text style={styles.googleButtonText}>Continue with Google</Text>
             </TouchableOpacity>
-          </View>
+          </View> */}
         </View>
       </SafeAreaView>
     </LinearGradient>
@@ -225,4 +231,12 @@ const styles = StyleSheet.create({
     width: 150,
     height: 80,
   },
+  forgotText: {
+  color: '#FF4800',
+  fontSize: 15,
+  textAlign: 'left',
+  marginLeft: 28,
+  marginBottom: 19,
+},
+
 });

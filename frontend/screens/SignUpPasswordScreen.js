@@ -58,12 +58,15 @@ export default function SignUpPasswordScreen({ navigation, route }) {
 
           <TextInput
             style={styles.input}
-            placeholder="••••••"
-            placeholderTextColor="rgba(255,255,255,0.5)"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            autoFocus
+              placeholder="••••••"
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+              autoFocus
+              keyboardType="default"  // 
+              textContentType="password" // 
+              autoComplete="password" 
           />
         </View>
 

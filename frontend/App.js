@@ -15,7 +15,9 @@ import ProfileScreen from './screens/ProfileScreen';
 import ChatHistoryScreen from './screens/ChatHistoryScreen';
 import UserInfoScreen from './screens/UserInfoScreen';
 import CustomSplashScreen from './screens/splashscreen';
-import EmailVerifyPending from './screens/EmailVerifyPending'; // Ensure this is the correct path
+import EmailVerifyPending from './screens/EmailVerifyPending'; 
+import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
+
 
 const Stack = createNativeStackNavigator();
 
@@ -53,6 +55,7 @@ export default function App() {
         <Stack.Screen name="SignUpEmail" component={SignUpEmailScreen} />
         <Stack.Screen name="SignUpPassword" component={SignUpPasswordScreen} />
         <Stack.Screen name="EmailVerifyPending" component={EmailVerifyPending} />
+        <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
 
         {/* User info collection */}
         <Stack.Screen name="UserInfo" component={UserInfoScreen} />

@@ -150,6 +150,8 @@ export default function ChatScreen({ route, navigation }) {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState(null);
 
+  
+
   const [chatId] = useState(() => {
     return route.params?.chatId || uuid.v4();
   });
@@ -232,10 +234,6 @@ export default function ChatScreen({ route, navigation }) {
       hide.remove();
     };
   }, []);
-
-  useEffect(() => {
-    if (promptText) sendMessage(promptText);
-  }, [promptText]);
 
   // Auto-scroll when new messages are added or content changes
   useEffect(() => {
@@ -366,7 +364,7 @@ export default function ChatScreen({ route, navigation }) {
       formData.append('email', user?.email);
       formData.append('model', "openai/gpt-4o-mini");
 
-      const response = await fetch('http://192.168.1.8:8000/voiceinput', {
+      const response = await fetch('https://therapist.axonbuild.com/voiceinput', {
         method: 'POST',
         headers: { 'Content-Type': 'multipart/form-data' },
         body: formData,
@@ -519,7 +517,7 @@ export default function ChatScreen({ route, navigation }) {
       const userProfile = await fetchUserProfile(uid);
 
       // Call backend
-      const response = await fetch('http://192.168.1.8:8000/chat', {
+      const response = await fetch('https://therapist.axonbuild.com/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
