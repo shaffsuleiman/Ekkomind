@@ -56,6 +56,7 @@ export default function SignUpEmailScreen({ navigation, route }) {
             keyboardType="email-address"
             autoCapitalize="none"
             autoFocus
+            
           />
         </View>
         

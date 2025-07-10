@@ -67,6 +67,8 @@ export default function OnboardingScreen() {
               keyboardType="email-address"
               value={email}
               onChangeText={setEmail}
+              autoCapitalize="none"
+              autoCorrect={false}
             />
           </View>
 
@@ -78,6 +80,8 @@ export default function OnboardingScreen() {
               secureTextEntry={true}
               value={password}
               onChangeText={setPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
             />
           </View>
           <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>

@@ -67,6 +67,8 @@ export default function SignUpPasswordScreen({ navigation, route }) {
               keyboardType="default"  // 
               textContentType="password" // 
               autoComplete="password" 
+              autoCapitalize="none"
+              autoCorrect={false}
           />
         </View>
 

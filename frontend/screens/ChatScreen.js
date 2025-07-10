@@ -12,12 +12,14 @@ import {
   Animated,
   ActivityIndicator,
   Dimensions,
-  Alert
+  Alert,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Audio } from 'expo-av';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import uuid from 'react-native-uuid';
 import { 
@@ -31,7 +33,7 @@ import {
   orderBy,      
   getDocs       
 } from 'firebase/firestore';
-import { db,auth } from '../firebase';
+import { db, auth } from '../firebase';
 
 const { height: screenHeight } = Dimensions.get('window');
 
@@ -66,7 +68,7 @@ const fetchUserProfile = async (uid) => {
     const userDocRef = doc(db, 'users', uid);
     const userDoc = await getDoc(userDocRef);
     if (userDoc.exists()) {
-      return userDoc.data(); // entire user profile object
+      return userDoc.data();
     } else {
       console.warn('User document does not exist');
       return null;
@@ -108,16 +110,6 @@ const saveMessageToFirestore = async (userEmail, chatId, messageObj) => {
   }
 };
 
-const BlinkingProcessingText = () => {
-  return (
-    <View style={{ paddingVertical: 10, alignItems: 'center' }}>
-      <Text style={{ fontSize: 14, color: '#FF4800', fontWeight: '600' }}>
-        Processing...
-      </Text>
-    </View>
-  );
-};
-
 // Format time like WhatsApp
 const formatMessageTime = (timestamp) => {
   if (!timestamp) return '';
@@ -136,6 +128,7 @@ const formatMessageTime = (timestamp) => {
 export default function ChatScreen({ route, navigation }) {
   const { promptText } = route.params || {};
   const user = route.params?.user || { email: auth.currentUser?.email };
+  const insets = useSafeAreaInsets();
 
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
@@ -149,7 +142,6 @@ export default function ChatScreen({ route, navigation }) {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState(null);
-
   
 
   const [chatId] = useState(() => {
@@ -163,6 +155,13 @@ export default function ChatScreen({ route, navigation }) {
   const voiceButtonOpacity = useRef(new Animated.Value(1)).current;
   const sendButtonScale = useRef(new Animated.Value(input.trim().length > 0 ? 1 : 0)).current;
   const recordingPulse = useRef(new Animated.Value(1)).current;
+
+  // Calculate bottom padding and navbar height based on safe area insets
+  const bottomPadding = Math.max(insets.bottom, 16);
+  const navbarHeight = Platform.select({
+    ios: 80,
+    android: 70 + insets.bottom,
+  });
 
   const loadExistingMessages = async (existingChatId) => {
     if (!existingChatId || !user?.email) return;
@@ -186,7 +185,8 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
-  const inputBottom = useRef(new Animated.Value(61)).current;
+  // Fixed input bottom animation with proper navbar height calculation
+  const inputBottom = useRef(new Animated.Value(navbarHeight)).current;
   const flatListRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -210,6 +210,7 @@ export default function ChatScreen({ route, navigation }) {
     }
   }, [route.params?.chatId, isExistingChat, promptText]);
 
+  // Fixed keyboard handling with proper navbar height
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', e => {
       setKeyboardVisible(true);
@@ -224,7 +225,7 @@ export default function ChatScreen({ route, navigation }) {
       setKeyboardVisible(false);
       setKeyboardHeight(0);
       Animated.timing(inputBottom, {
-        toValue: 61,
+        toValue: navbarHeight, // Make sure this uses the calculated navbarHeight
         duration: 250,
         useNativeDriver: false,
       }).start();
@@ -233,7 +234,7 @@ export default function ChatScreen({ route, navigation }) {
       show.remove();
       hide.remove();
     };
-  }, []);
+  }, [navbarHeight]);
 
   // Auto-scroll when new messages are added or content changes
   useEffect(() => {
@@ -248,7 +249,7 @@ export default function ChatScreen({ route, navigation }) {
     return sound ? () => sound.unloadAsync() : undefined;
   }, [sound]);
 
-  // Fixed WhatsApp-style input animations - send button should always be visible when there's text
+  // Fixed WhatsApp-style input animations
   useEffect(() => {
     const hasText = input.trim().length > 0;
     
@@ -284,9 +285,9 @@ export default function ChatScreen({ route, navigation }) {
   }, [isRecording]);
 
   useEffect(() => {
-  if (flatListRef.current) {
-    flatListRef.current.scrollToEnd({ animated: true });
-  }
+    if (flatListRef.current) {
+      flatListRef.current.scrollToEnd({ animated: true });
+    }
   }, [streamingMessageId, messages]);
 
   const playBeepSound = async () => {
@@ -341,7 +342,6 @@ export default function ChatScreen({ route, navigation }) {
   const sendVoiceMessage = async (audioUri) => {
     if (isLoading) return;
     
-    // Add loading message with proper structure
     const loadingMessage = { 
       id: `loading-${Date.now()}`,
       role: 'bot', 
@@ -541,7 +541,7 @@ export default function ChatScreen({ route, navigation }) {
           isLoading: false,
         };
         await saveMessageToFirestore(user.email, chatId, finalBotMsg);
-      }, (data.message?.length || 20) * 30 + 500); // Adjusted timing
+      }, (data.message?.length || 20) * 30 + 500);
 
     } catch (e) {
       console.error('Chat error:', e);
@@ -578,7 +578,6 @@ export default function ChatScreen({ route, navigation }) {
         ]}
       >
         {item.isLoading && !item.content ? (
-          // This is the loading state for new messages
           <View style={styles.loadingMessageContainer}>
             <ActivityIndicator size="small" color="#FF4800" />
             <Text style={styles.processingText}>
@@ -613,7 +612,11 @@ export default function ChatScreen({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#000000" />
+      <StatusBar 
+        barStyle="light-content" 
+        backgroundColor="transparent" 
+        translucent={true}
+      />
 
       {/* Main Content with Gradient */}
       <LinearGradient
@@ -621,7 +624,7 @@ export default function ChatScreen({ route, navigation }) {
         locations={[0, 0.4, 1]}
         start={{ x: 0, y: 0.2 }}
         end={{ x: 1, y: 0.9 }}
-        style={styles.gradient}
+        style={[styles.gradient, { paddingTop: insets.top }]}
       >
         {/* Logo Header */}
         <View style={styles.header}>
@@ -642,7 +645,9 @@ export default function ChatScreen({ route, navigation }) {
           renderItem={renderItem}
           contentContainerStyle={[
             styles.chatContent,
-            { paddingBottom: keyboardVisible ? 20 : 100 }
+            { 
+              paddingBottom: keyboardVisible ? 20 : navbarHeight + 20 
+            }
           ]}
           style={styles.chatList}
           showsVerticalScrollIndicator={false}
@@ -664,8 +669,8 @@ export default function ChatScreen({ route, navigation }) {
       </LinearGradient>
 
       {/* WhatsApp-Style Input Bar */}
-      <Animated.View style={[styles.inputAreaContainer, { bottom: inputBottom }]}>
-        <BlurView intensity={80} tint="dark" style={styles.inputBlur}>
+  <Animated.View style={[styles.inputAreaContainer, { bottom: inputBottom }]}>        
+    <BlurView intensity={80} tint="dark" style={styles.inputBlur}>
           <View style={styles.whatsappInputContainer}>
             {/* Main Input Container */}
             <View style={styles.inputRow}>
@@ -754,27 +759,38 @@ export default function ChatScreen({ route, navigation }) {
         </BlurView>
       </Animated.View>
 
-      {/* Bottom Nav Bar */}
+      {/* Bottom Navigation Bar - Fixed positioning and visibility */}
       {!keyboardVisible && (
-        <View style={styles.navbarContainer}>
-          <View style={styles.activeNavItemContainer}>
-            <TouchableOpacity style={styles.activeNavItem}>
-              <Ionicons name="chatbubble" size={24} color="#FF4800" />
-              <Text style={styles.activeNavLabel}>CHAT</Text>
-            </TouchableOpacity>
-          </View>
+        <View style={[
+          styles.bottomNavbar,
+          { 
+            height: navbarHeight,
+            paddingBottom: bottomPadding,
+          }
+        ]}>
+          <TouchableOpacity
+            style={[styles.navItem, styles.activeNavItem]}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chatbubble" size={24} color="#FF4800" />
+            <Text style={[styles.navLabel, styles.activeNavLabel]}>CHAT</Text>
+          </TouchableOpacity>
+          
           <TouchableOpacity
             style={styles.navItem}
             onPress={() => navigation.navigate('UserProfile')}
+            activeOpacity={0.7}
           >
-            <Ionicons name="person-outline" size={24} color="#FFFFFF" />
+            <Ionicons name="person-outline" size={24} color="rgba(255,255,255,0.7)" />
             <Text style={styles.navLabel}>PROFILE</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.navItem}
             onPress={() => navigation.navigate('ChatHistory')}
+            activeOpacity={0.7}
           >
-            <Ionicons name="time" size={24} color="#FFFFFF" />
+            <Ionicons name="time" size={24} color="rgba(255,255,255,0.7)" />
             <Text style={styles.navLabel}>HISTORY</Text>
           </TouchableOpacity>
         </View>
@@ -792,7 +808,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingVertical: 40,
+    paddingVertical: 15,
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
@@ -876,7 +892,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minHeight: 50,
   },
-    processingText: {
+  processingText: {
     fontSize: 14,
     fontWeight: '500',
     color: '#FF4800',
@@ -970,20 +986,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#FF4800',
   },
-  navbarContainer: {
-    height: 60,
+  // Bottom Navigation Styles - Fixed from HomeScreen pattern
+  bottomNavbar: {
     flexDirection: 'row',
-    backgroundColor: '#000000',
+    backgroundColor: 'rgba(20,20,20,0.95)',
     borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    paddingTop: 8,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    justifyContent: 'space-around',
+    alignItems: 'flex-start',
+    ...Platform.select({
+      android: {
+        elevation: 8,
+      },
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+      },
+    }),
   },
-  activeNavItemContainer: {
-    flex: 1,
+  navItem: {
     alignItems: 'center',
-    paddingVertical: 8,
+    justifyContent: 'center',
+    flex: 1,
+    paddingVertical: 5,
+    minHeight: 44, // Minimum touch target size
+  },
+  navLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: 'center',
+    lineHeight: 12,
   },
   activeNavItem: {
-    alignItems: 'center',
+    // Additional styles for active nav item if needed
   },
   activeNavLabel: {
     fontSize: 10,

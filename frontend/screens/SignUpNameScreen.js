@@ -47,6 +47,8 @@ export default function SignUpNameScreen({ navigation }) {
             value={name}
             onChangeText={setName}
             autoFocus
+            autoCapitalize="none"
+            autoCorrect={false}
           />
         </View>
         
