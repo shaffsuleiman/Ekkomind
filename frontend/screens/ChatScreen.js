@@ -1,19 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  FlatList,
-  StyleSheet,
-  Image,
-  Keyboard,
-  StatusBar,
-  Animated,
-  ActivityIndicator,
-  Dimensions,
-  Alert,
-  Platform,
+  View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Image,
+  Keyboard, StatusBar, Animated, ActivityIndicator, Dimensions, Alert,
+  Platform, 
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -125,6 +114,8 @@ const formatMessageTime = (timestamp) => {
   }
 };
 
+
+
 export default function ChatScreen({ route, navigation }) {
   const { promptText } = route.params || {};
   const user = route.params?.user || { email: auth.currentUser?.email };
@@ -185,8 +176,6 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
-  // Fixed input bottom animation with proper navbar height calculation
-  const inputBottom = useRef(new Animated.Value(navbarHeight)).current;
   const flatListRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -209,41 +198,6 @@ export default function ChatScreen({ route, navigation }) {
       sendMessage(promptText);
     }
   }, [route.params?.chatId, isExistingChat, promptText]);
-
-  // Fixed keyboard handling with proper navbar height
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', e => {
-      setKeyboardVisible(true);
-      setKeyboardHeight(e.endCoordinates.height);
-      Animated.timing(inputBottom, {
-        toValue: e.endCoordinates.height,
-        duration: 250,
-        useNativeDriver: false,
-      }).start();
-    });
-    const hide = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardVisible(false);
-      setKeyboardHeight(0);
-      Animated.timing(inputBottom, {
-        toValue: navbarHeight, // Make sure this uses the calculated navbarHeight
-        duration: 250,
-        useNativeDriver: false,
-      }).start();
-    });
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, [navbarHeight]);
-
-  // Auto-scroll when new messages are added or content changes
-  useEffect(() => {
-    if (flatListRef.current && messages.length > 0) {
-      setTimeout(() => {
-        flatListRef.current.scrollToEnd({ animated: true });
-      }, 100);
-    }
-  }, [messages]);
 
   useEffect(() => {
     return sound ? () => sound.unloadAsync() : undefined;
@@ -283,12 +237,6 @@ export default function ChatScreen({ route, navigation }) {
       recordingPulse.setValue(1);
     }
   }, [isRecording]);
-
-  useEffect(() => {
-    if (flatListRef.current) {
-      flatListRef.current.scrollToEnd({ animated: true });
-    }
-  }, [streamingMessageId, messages]);
 
   const playBeepSound = async () => {
     try {
@@ -638,39 +586,39 @@ export default function ChatScreen({ route, navigation }) {
         </View>
 
         {/* Chat Messages */}
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          keyExtractor={(item) => item.id || item.timestamp}
-          renderItem={renderItem}
-          contentContainerStyle={[
-            styles.chatContent,
-            { 
-              paddingBottom: keyboardVisible ? 20 : navbarHeight + 20 
-            }
-          ]}
-          style={styles.chatList}
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => {
-            if (flatListRef.current && messages.length > 0) {
-              setTimeout(() => {
-                flatListRef.current.scrollToEnd({ animated: true });
-              }, 100);
-            }
-          }}
-          onLayout={() => {
-            if (flatListRef.current && messages.length > 0) {
-              setTimeout(() => {
-                flatListRef.current.scrollToEnd({ animated: false });
-              }, 100);
-            }
-          }}
-        />
+    <FlatList
+        ref={flatListRef}
+        data={messages}
+        keyExtractor={(item) => item.id || item.timestamp}
+        renderItem={renderItem}
+        contentContainerStyle={[
+          styles.chatContent,
+          { 
+            paddingBottom: navbarHeight + 80 
+          }
+        ]}
+        style={styles.chatList}
+        showsVerticalScrollIndicator={false}
+        onContentSizeChange={(contentWidth, contentHeight) => {
+          if (flatListRef.current && messages.length > 0) {
+            setTimeout(() => {
+              // Calculate the offset to show last message above input bar
+              const inputBarHeight = 80; // Approximate input bar height
+              const targetOffset = Math.max(0, contentHeight - (screenHeight - navbarHeight - inputBarHeight));
+              
+              flatListRef.current.scrollToOffset({
+                offset: targetOffset,
+                animated: true,
+              });
+            }, 100);
+          }
+        }}
+      />
       </LinearGradient>
 
       {/* WhatsApp-Style Input Bar */}
-  <Animated.View style={[styles.inputAreaContainer, { bottom: inputBottom }]}>        
-    <BlurView intensity={80} tint="dark" style={styles.inputBlur}>
+  <View style={[styles.inputAreaContainer, { bottom: navbarHeight }]}>   
+     <BlurView intensity={80} tint="dark" style={styles.inputBlur}>
           <View style={styles.whatsappInputContainer}>
             {/* Main Input Container */}
             <View style={styles.inputRow}>
@@ -757,7 +705,7 @@ export default function ChatScreen({ route, navigation }) {
             )}
           </View>
         </BlurView>
-      </Animated.View>
+      </View>
 
       {/* Bottom Navigation Bar - Fixed positioning and visibility */}
       {!keyboardVisible && (
